@@ -166,6 +166,20 @@ def delete_product(product_id):
     else:
         return jsonify({'error': 'Failed to delete product'}), 400
 
+@app.route('/api/products/<int:product_id>/image', methods=['GET'])
+def get_product_image(product_id):
+    image_data = db.get_product_image_data(product_id)
+    
+    if image_data:
+        # Use send_file to correctly serve the binary image data
+        return send_file(
+            io.BytesIO(image_data),
+            mimetype='image/jpeg', # A common default, adjust if you store mime types
+            as_attachment=False
+        )
+    else:
+        return jsonify({'error': 'Image not found for this product'}), 404
+
 # =========================
 # CATEGORY ENDPOINTS
 # =========================
@@ -542,6 +556,7 @@ def not_found(error):
 @app.errorhandler(500)
 def internal_error(error):
     return jsonify({'error': 'Internal server error'}), 500
+
 
 
 
