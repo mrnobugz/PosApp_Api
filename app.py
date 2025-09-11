@@ -93,7 +93,16 @@ def create_product():
     for field in required_fields:
         if field not in data:
             return jsonify({'error': f'{field} is required'}), 400
-    
+
+    image_data = None
+    image_data_base64 = data.get('image_data')
+    if image_data_base64:
+        try:
+            # Decode the Base64 string into binary data
+            image_data = base64.b64decode(image_data_base64)
+        except (ValueError, TypeError):
+            return jsonify({'error': 'Invalid Base64 image data'}), 400
+            
     success = db.add_product(
         name=data['name'],
         price=data['price'],
@@ -525,4 +534,5 @@ def not_found(error):
 @app.errorhandler(500)
 def internal_error(error):
     return jsonify({'error': 'Internal server error'}), 500
+
 
