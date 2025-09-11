@@ -110,6 +110,7 @@ def create_product():
         category_id=data.get('category_id'),
         sku=data.get('sku'),
         description=data.get('description'),
+        image_data=image_data, # Pass the decoded binary data
         barcode=data.get('barcode'),
         buying_price=data.get('buying_price', 0.0),
         low_stock_threshold=data.get('low_stock_threshold', 10)
@@ -148,6 +149,7 @@ def update_product(product_id):
         category_id=data.get('category_id'),
         sku=data.get('sku'),
         description=data.get('description'),
+        image_data=image_data, # Pass the decoded binary data
         barcode=data.get('barcode'),
         buying_price=data.get('buying_price', 0.0),
         low_stock_threshold=data.get('low_stock_threshold', 10)
@@ -174,7 +176,7 @@ def get_product_image(product_id):
         # Use send_file to correctly serve the binary image data
         return send_file(
             io.BytesIO(image_data),
-            mimetype='image/jpeg', # A common default, adjust if you store mime types
+            mimetype=['image/jpeg', 'image/png', 'image/webp','image/svg+xml','image/bmp'],
             as_attachment=False
         )
     else:
@@ -556,6 +558,7 @@ def not_found(error):
 @app.errorhandler(500)
 def internal_error(error):
     return jsonify({'error': 'Internal server error'}), 500
+
 
 
 
