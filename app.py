@@ -131,7 +131,15 @@ def get_product(product_id):
 @app.route('/api/products/<int:product_id>', methods=['PUT'])
 def update_product(product_id):
     data = request.get_json()
-    
+
+    image_data = None
+    if 'image_data' in data: # Check if the key is present
+        image_data_base64 = data.get('image_data')
+        if image_data_base64:
+            try:
+                image_data = base64.b64decode(image_data_base64)
+            except (ValueError, TypeError):
+                return jsonify({'error': 'Invalid Base64 image data'}), 400
     success = db.update_product(
         product_id=product_id,
         name=data['name'],
@@ -534,5 +542,6 @@ def not_found(error):
 @app.errorhandler(500)
 def internal_error(error):
     return jsonify({'error': 'Internal server error'}), 500
+
 
 
