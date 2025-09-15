@@ -238,11 +238,11 @@ def get_product_image_data(product_id):
     """Fetches only the BLOB image data for a product."""
     conn = connect_db()
     if conn:
-        try:
+        
             cursor = conn.cursor()
             cursor.execute("SELECT image_data FROM products WHERE id = %s", (product_id,))
             row = cursor.fetchone()
-            return row[0] if row else None
+            return row['id'] if row else None
         except psycopg2.Error as e:
             print(f"Error fetching product image data: {e}")
             return None
@@ -256,12 +256,12 @@ def _create_journal_entry(cursor, description, debit_account_name, credit_accoun
         cursor.execute("SELECT id FROM chart_of_accounts WHERE name = %s", (debit_account_name,))
         debit_id_row = cursor.fetchone()
         if not debit_id_row: raise Exception(f"Debit account '{debit_account_name}' not found.")
-        debit_id = debit_id_row[0]
+        debit_id = debit_id_row['id']
 
         cursor.execute("SELECT id FROM chart_of_accounts WHERE name = %s", (credit_account_name,))
         credit_id_row = cursor.fetchone()
         if not credit_id_row: raise Exception(f"Credit account '{credit_account_name}' not found.")
-        credit_id = credit_id_row[0]
+        credit_id = credit_id_row['id']
 
         entry_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S') # Get current local time
         cursor.execute("""
@@ -578,12 +578,12 @@ def add_expense(description, amount, expense_account_name, payment_account_name)
         cursor.execute("SELECT id FROM chart_of_accounts WHERE name = %s", (expense_account_name,))
         expense_account_id_row = cursor.fetchone()
         if not expense_account_id_row: raise Exception(f"Expense account '{expense_account_name}' not found.")
-        expense_account_id = expense_account_id_row[0]
+        expense_account_id = expense_account_id_row['id']
 
         cursor.execute("SELECT id FROM chart_of_accounts WHERE name = %s", (payment_account_name,))
         payment_account_id_row = cursor.fetchone()
         if not payment_account_id_row: raise Exception(f"Payment account '{payment_account_name}' not found.")
-        payment_account_id = payment_account_id_row[0]
+        payment_account_id = payment_account_id_row['id']
 
         # Insert into expenses table
         expense_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S') # Get current local time
