@@ -224,7 +224,7 @@ def init_db():
 
             # Populate Chart of Accounts if it's empty
             cursor.execute("SELECT COUNT(*) FROM chart_of_accounts")
-            if cursor.fetchone()['id'] == 0:
+            if cursor.fetchone()['count'] == 0:
                 print("Chart of Accounts is empty. Populating with default accounts...")
                 populate_chart_of_accounts()
 
@@ -242,7 +242,7 @@ def get_product_image_data(product_id):
             cursor = conn.cursor()
             cursor.execute("SELECT image_data FROM products WHERE id = %s", (product_id,))
             row = cursor.fetchone()
-            return row['id'] if row else None
+            return row['image_data'] if row else None
         except psycopg2.Error as e:
             print(f"Error fetching product image data: {e}")
             return None
@@ -271,6 +271,44 @@ def _create_journal_entry(cursor, description, debit_account_name, credit_accoun
     except Exception as e:
         # Re-raise the exception to be caught by the calling function's transaction block
         raise Exception(f"Failed to create journal entry: {e}")
+
+
+
+def get_products_with_filters(category=None, price_min=None, price_max=None, stock_status=None, search_term=None):
+    """Get products with advanced filtering capabilities."""
+    conn = connect_db()
+    if not conn: return []
+    try:
+        cursor = conn.cursor()
+        
+        # Start with a base query
+        query = """
+            SELECT p.*, c.name as category_name
+            FROM products p
+            LEFT JOIN categories c ON p.category_id = c.id
+            WHERE 1=1
+        """
+        params = []
+
+        if category and category != "All":
+            query += " AND c.name = %s"
+            params.append(category)
+        
+        # Add other filters as needed...
+
+        if search_term:
+            query += " AND (p.name ILIKE %s OR p.sku ILIKE %s)"
+            params.append(f"%{search_term}%")
+            params.append(f"%{search_term}%")
+
+        query += " ORDER BY p.name"
+        cursor.execute(query, tuple(params))
+        return cursor.fetchall()
+    except psycopg2.Error as e:
+        print(f"Error fetching products with filters: {e}")
+        return []
+    finally:
+        if conn: conn.close()
 
 def record_sale(cart_items, payments, discount_amount=0.0, tax_rate=0.0, customer_id=None, due_date=None):
     """
@@ -379,7 +417,7 @@ def add_payment_to_sale(sale_id, payment_method, amount):
         total_amount = cursor.fetchone()['total_amount']
         
         cursor.execute("SELECT SUM(amount) FROM sale_payments WHERE sale_id = %s", (sale_id,))
-        total_paid = cursor.fetchone()['id'] or 0.0
+        total_paid = cursor.fetchone()['sum'] or 0.0
 
         new_status = 'Partial'
         if abs(total_paid - total_amount) < 0.01:
@@ -709,7 +747,7 @@ def get_account_balance(account_names, start_date=None, end_date=None):
             WHERE debit_account_id IN ({','.join(['%s'] * len(account_ids))}) {date_condition}
         """
         cursor.execute(debit_query, params_debit)
-        total_debits = cursor.fetchone()['id'] or 0.0
+        total_debits = cursor.fetchone()['sum'] or 0.0
 
         # Calculate credits
         credit_query = f"""
@@ -931,7 +969,7 @@ def update_product(product_id, name, price, stock, category_id=None, sku=None, d
                 """, (name, price, stock, category_id, sku, description, image_data, barcode, buying_price, low_stock_threshold, product_id))
             else:
                 cursor.execute("""
-                    UPDATE products SET name=%s, price=%s, stock=%s, category_id=%s, sku=%s, description=%s, barcode=%s, =%s, low_stock_threshold=%s
+                    UPDATE products SET name=%s, price=%s, stock=%s, category_id=%s, sku=%s, description=%s, barcode=%s, buying_price=%s, low_stock_threshold=%s
                     WHERE id=%s
                 """, (name, price, stock, category_id, sku, description, barcode, buying_price, low_stock_threshold, product_id))
             conn.commit()
