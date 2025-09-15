@@ -1,27 +1,29 @@
-import sqlite3
+import psycopg2
 import os
 import sys
 from datetime import datetime, timedelta
 import random
 from werkzeug.security import generate_password_hash, check_password_hash
-
-DATABASE_NAME = 'pos_system.db'
-
-def get_db_path():
-    if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, DATABASE_NAME)
-    else:
-        return os.path.join(os.getcwd(), DATABASE_NAME)
-
+from psycopg2.extras import RealDictCursor
 
 def connect_db():
-    """Connects to the SQLite database."""
+    """
+    Connects to the PostgreSQL database using the DATABASE_URL environment variable.
+    """
     try:
-        conn = sqlite3.connect(get_db_path())
-        conn.row_factory = sqlite3.Row # This allows accessing columns by name
+        # Connect using the single URL from the environment.
+        # This is more secure and standard for cloud apps.
+        conn = psycopg2.connect(os.environ.get('DATABASE_URL'))
+        
+        # This makes the cursor return dictionary-like rows (e.g., row['name'])
+        # which is needed for the rest of your code to work as intended.
+        conn.cursor_factory = psycopg2.extras.DictCursor
+        
         return conn
-    except sqlite3.Error as e:
-        print(f"Error connecting to database: {e}")
+        
+    except (Exception, psycopg2.DatabaseError) as error:
+        # This prevents your app from crashing if the database is unavailable.
+        print(f"Error connecting to PostgreSQL database: {error}")
         return None
 
 def populate_chart_of_accounts():
@@ -54,11 +56,15 @@ def populate_chart_of_accounts():
             ('Office Supplies Expense', 'Expense', None),
             ('Miscellaneous Expense', 'Expense', None)
         ]
-        cursor.executemany("INSERT INTO chart_of_accounts (name, type, parent_id) VALUES (?, ?, ?)", accounts)
+        cursor.executemany(
+            "INSERT INTO chart_of_accounts (name, type, parent_id) VALUES (%s, %s, %s)", 
+            accounts
+        )
         conn.commit()
         print("Default Chart of Accounts populated.")
-    except sqlite3.Error as e:
+    except psycopg2.Error as e:
         print(f"Error populating Chart of Accounts: {e}")
+        conn.rollback()
     finally:
         conn.close()
 
@@ -72,7 +78,7 @@ def init_db():
             # --- Customers Table ---
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS customers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
                     phone TEXT,
                     email TEXT,
@@ -83,20 +89,20 @@ def init_db():
             # --- Business & Sales Tables ---
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS categories (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE
                 )
             ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS products (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
                     price REAL NOT NULL,
                     stock INTEGER NOT NULL,
                     category_id INTEGER,
                     sku TEXT,
                     description TEXT,
-                    image_data BLOB,
+                    image_data BYTEA,
                     barcode TEXT UNIQUE,
                     buying_price REAL NOT NULL,
                     low_stock_threshold INTEGER DEFAULT 10,
@@ -105,7 +111,7 @@ def init_db():
             ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS sales (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     total_amount REAL NOT NULL,
                     sale_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     discount_amount REAL DEFAULT 0.0,
@@ -118,7 +124,7 @@ def init_db():
             ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS sale_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     sale_id INTEGER NOT NULL,
                     product_id INTEGER NOT NULL,
                     quantity INTEGER NOT NULL,
@@ -130,7 +136,7 @@ def init_db():
 
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS sale_payments (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     sale_id INTEGER NOT NULL,
                     payment_method TEXT NOT NULL, -- e.g., 'Cash', 'Credit Card', 'On Credit'
                     amount REAL NOT NULL,
@@ -138,10 +144,9 @@ def init_db():
                 )
             ''')
 
-
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS suppliers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
                     contact_person TEXT,
                     phone TEXT
@@ -149,7 +154,7 @@ def init_db():
             ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS purchases (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     supplier_id INTEGER NOT NULL,
                     total_cost REAL NOT NULL,
                     purchase_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -158,7 +163,7 @@ def init_db():
             ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS purchase_items (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     purchase_id INTEGER NOT NULL,
                     product_id INTEGER NOT NULL,
                     quantity INTEGER NOT NULL,
@@ -169,7 +174,7 @@ def init_db():
             ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     username TEXT NOT NULL UNIQUE,
                     password_hash TEXT NOT NULL,
                     role TEXT NOT NULL DEFAULT 'cashier'
@@ -179,7 +184,7 @@ def init_db():
             # --- Accounting Tables ---
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS chart_of_accounts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
                     type TEXT NOT NULL, -- Asset, Liability, Equity, Revenue, Expense
                     parent_id INTEGER,
@@ -188,7 +193,7 @@ def init_db():
             ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS journal_entries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     description TEXT NOT NULL,
                     debit_account_id INTEGER NOT NULL,
@@ -202,7 +207,7 @@ def init_db():
             ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS expenses (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     description TEXT NOT NULL,
                     amount REAL NOT NULL,
                     expense_account_id INTEGER NOT NULL,
@@ -222,12 +227,11 @@ def init_db():
                 print("Chart of Accounts is empty. Populating with default accounts...")
                 populate_chart_of_accounts()
 
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
             print(f"Error initializing database: {e}")
+            conn.rollback()
         finally:
             conn.close()
-
-
 
 def get_product_image_data(product_id):
     """Fetches only the BLOB image data for a product."""
@@ -235,10 +239,10 @@ def get_product_image_data(product_id):
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT image_data FROM products WHERE id = ?", (product_id,))
+            cursor.execute("SELECT image_data FROM products WHERE id = %s", (product_id,))
             row = cursor.fetchone()
-            return row['image_data'] if row else None
-        except sqlite3.Error as e:
+            return row[0] if row else None
+        except psycopg2.Error as e:
             print(f"Error fetching product image data: {e}")
             return None
         finally:
@@ -248,12 +252,12 @@ def _create_journal_entry(cursor, description, debit_account_name, credit_accoun
     """Internal helper to create a journal entry. Assumes cursor is passed."""
     try:
         # Get account IDs
-        cursor.execute("SELECT id FROM chart_of_accounts WHERE name = ?", (debit_account_name,))
+        cursor.execute("SELECT id FROM chart_of_accounts WHERE name = %s", (debit_account_name,))
         debit_id_row = cursor.fetchone()
         if not debit_id_row: raise Exception(f"Debit account '{debit_account_name}' not found.")
         debit_id = debit_id_row[0]
 
-        cursor.execute("SELECT id FROM chart_of_accounts WHERE name = ?", (credit_account_name,))
+        cursor.execute("SELECT id FROM chart_of_accounts WHERE name = %s", (credit_account_name,))
         credit_id_row = cursor.fetchone()
         if not credit_id_row: raise Exception(f"Credit account '{credit_account_name}' not found.")
         credit_id = credit_id_row[0]
@@ -261,12 +265,11 @@ def _create_journal_entry(cursor, description, debit_account_name, credit_accoun
         entry_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S') # Get current local time
         cursor.execute("""
             INSERT INTO journal_entries (description, debit_account_id, credit_account_id, amount, reference_id, reference_type, date)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """, (description, debit_id, credit_id, amount, ref_id, ref_type, entry_timestamp))
     except Exception as e:
         # Re-raise the exception to be caught by the calling function's transaction block
         raise Exception(f"Failed to create journal entry: {e}")
-
 
 def record_sale(cart_items, payments, discount_amount=0.0, tax_rate=0.0, customer_id=None, due_date=None):
     """
@@ -299,26 +302,26 @@ def record_sale(cart_items, payments, discount_amount=0.0, tax_rate=0.0, custome
         # The `tax_amount` column in the DB stores the tax RATE.
         sale_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute(
-            "INSERT INTO sales (total_amount, discount_amount, tax_amount, sale_date, customer_id, status, due_date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sales (total_amount, discount_amount, tax_amount, sale_date, customer_id, status, due_date) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (final_total, discount_amount, tax_rate, sale_timestamp, customer_id, status, due_date)
         )
-        sale_id = cursor.lastrowid
+        sale_id = cursor.fetchone()[0]
 
         # Record sale items, update stock, and calculate COGS
         total_cogs = 0
         for item in cart_items:
-            cursor.execute("INSERT INTO sale_items (sale_id, product_id, quantity, price_at_sale) VALUES (?, ?, ?, ?)",
+            cursor.execute("INSERT INTO sale_items (sale_id, product_id, quantity, price_at_sale) VALUES (%s, %s, %s, %s)",
                            (sale_id, item['product_id'], item['quantity'], item['price_at_sale']))
-            cursor.execute("UPDATE products SET stock = stock - ? WHERE id = ?", (item['quantity'], item['product_id']))
+            cursor.execute("UPDATE products SET stock = stock - %s WHERE id = %s", (item['quantity'], item['product_id']))
 
-            cursor.execute("SELECT buying_price FROM products WHERE id = ?", (item['product_id'],))
-            buying_price = cursor.fetchone()['buying_price'] or 0
+            cursor.execute("SELECT buying_price FROM products WHERE id = %s", (item['product_id'],))
+            buying_price = cursor.fetchone()[0] or 0
             total_cogs += item['quantity'] * buying_price
 
         # Record each payment method
         if payments:
             for payment in payments:
-                cursor.execute("INSERT INTO sale_payments (sale_id, payment_method, amount) VALUES (?, ?, ?)",
+                cursor.execute("INSERT INTO sale_payments (sale_id, payment_method, amount) VALUES (%s, %s, %s)",
                                (sale_id, payment['method'], payment['amount']))
 
         # --- Create Corrected Double-Entry Journal Entries for Tax-Inclusive Pricing ---
@@ -367,21 +370,21 @@ def add_payment_to_sale(sale_id, payment_method, amount):
     try:
         cursor = conn.cursor()
         
-        cursor.execute("INSERT INTO sale_payments (sale_id, payment_method, amount) VALUES (?, ?, ?)",
+        cursor.execute("INSERT INTO sale_payments (sale_id, payment_method, amount) VALUES (%s, %s, %s)",
                        (sale_id, payment_method, amount))
 
         # Update the sale's status
-        cursor.execute("SELECT total_amount FROM sales WHERE id = ?", (sale_id,))
-        total_amount = cursor.fetchone()['total_amount']
+        cursor.execute("SELECT total_amount FROM sales WHERE id = %s", (sale_id,))
+        total_amount = cursor.fetchone()[0]
         
-        cursor.execute("SELECT SUM(amount) FROM sale_payments WHERE sale_id = ?", (sale_id,))
+        cursor.execute("SELECT SUM(amount) FROM sale_payments WHERE sale_id = %s", (sale_id,))
         total_paid = cursor.fetchone()[0] or 0.0
 
         new_status = 'Partial'
         if abs(total_paid - total_amount) < 0.01:
             new_status = 'Paid'
         
-        cursor.execute("UPDATE sales SET status = ? WHERE id = ?", (new_status, sale_id))
+        cursor.execute("UPDATE sales SET status = %s WHERE id = %s", (new_status, sale_id))
 
         payment_account_name = 'Bank' if payment_method.lower() != 'cash' else 'Cash'
         _create_journal_entry(cursor, f"Additional payment for Sale ID: {sale_id}",
@@ -403,7 +406,7 @@ def get_sales_details_for_history(start_date, end_date):
     conn = connect_db()
     if not conn: return []
     try:
-        cursor = conn.cursor()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         query = """
             SELECT
                 s.id,
@@ -415,12 +418,12 @@ def get_sales_details_for_history(start_date, end_date):
                 (SELECT COUNT(id) FROM sale_items WHERE sale_id = s.id) as total_items
             FROM sales s
             LEFT JOIN customers c ON s.customer_id = c.id
-            WHERE s.sale_date BETWEEN ? AND ?
+            WHERE s.sale_date BETWEEN %s AND %s
             ORDER BY s.sale_date DESC
         """
         cursor.execute(query, (start_date, f"{end_date} 23:59:59"))
-        return [dict(row) for row in cursor.fetchall()]
-    except sqlite3.Error as e:
+        return cursor.fetchall()
+    except psycopg2.Error as e:
         print(f"Error fetching detailed sales history: {e}")
         return []
     finally:
@@ -431,26 +434,23 @@ def get_sale_payments(sale_id):
     conn = connect_db()
     if not conn: return []
     try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT payment_method, amount FROM sale_payments WHERE sale_id = ?", (sale_id,))
-        return [dict(row) for row in cursor.fetchall()]
-    except sqlite3.Error as e:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT payment_method, amount FROM sale_payments WHERE sale_id = %s", (sale_id,))
+        return cursor.fetchall()
+    except psycopg2.Error as e:
         print(f"Error fetching payments for sale ID {sale_id}: {e}")
         return []
     finally:
         if conn: conn.close()
         
-        
-        
 def get_customer_by_id(customer_id):
     conn = connect_db()
     if conn:
         try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM customers WHERE id = ?", (customer_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
-        except sqlite3.Error as e:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("SELECT * FROM customers WHERE id = %s", (customer_id,))
+            return cursor.fetchone()
+        except psycopg2.Error as e:
             print(f"Error fetching customer by ID: {e}")
             return None
         finally:
@@ -462,13 +462,13 @@ def update_customer(customer_id, name, phone=None, email=None):
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                UPDATE customers SET name = ?, phone = ?, email = ? WHERE id = ?
+                UPDATE customers SET name = %s, phone = %s, email = %s WHERE id = %s
             """, (name, phone, email, customer_id))
             conn.commit()
             return cursor.rowcount > 0
-        except sqlite3.IntegrityError:
+        except psycopg2.IntegrityError:
             return False # Name likely exists
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
             print(f"Error updating customer: {e}")
             return False
         finally:
@@ -480,14 +480,14 @@ def delete_customer(customer_id):
         try:
             cursor = conn.cursor()
             # Check if customer is linked to sales
-            cursor.execute("SELECT 1 FROM sales WHERE customer_id = ? LIMIT 1", (customer_id,))
+            cursor.execute("SELECT 1 FROM sales WHERE customer_id = %s LIMIT 1", (customer_id,))
             if cursor.fetchone():
                 return False # Cannot delete if linked
             
-            cursor.execute("DELETE FROM customers WHERE id = ?", (customer_id,))
+            cursor.execute("DELETE FROM customers WHERE id = %s", (customer_id,))
             conn.commit()
             return cursor.rowcount > 0
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
             print(f"Error deleting customer: {e}")
             return False
         finally:
@@ -502,20 +502,20 @@ def record_purchase(supplier_id, purchase_items_list):
         total_cost = sum(item['quantity'] * item['cost'] for item in purchase_items_list)
         purchase_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S') # Get current local time
 
-        cursor.execute("INSERT INTO purchases (supplier_id, total_cost, purchase_date) VALUES (?, ?, ?)", (supplier_id, total_cost, purchase_timestamp))
-        purchase_id = cursor.lastrowid
-
+        cursor.execute("INSERT INTO purchases (supplier_id, total_cost, purchase_date) VALUES (%s, %s, %s) RETURNING id", 
+                      (supplier_id, total_cost, purchase_timestamp))
+        purchase_id = cursor.fetchone()[0]
 
         for item in purchase_items_list:
-            cursor.execute("INSERT INTO purchase_items (purchase_id, product_id, quantity, cost_at_purchase) VALUES (?, ?, ?, ?)",
+            cursor.execute("INSERT INTO purchase_items (purchase_id, product_id, quantity, cost_at_purchase) VALUES (%s, %s, %s, %s)",
                         (purchase_id, item['product_id'], item['quantity'], item['cost']))
             
             cursor.execute("""
                     UPDATE products 
-                    SET stock = stock + ?, 
-                        price = ?, 
-                        buying_price = ? 
-                    WHERE id = ?
+                    SET stock = stock + %s, 
+                        price = %s, 
+                        buying_price = %s 
+                    WHERE id = %s
                 """, (item['quantity'], item['new_price'], item['cost'], item['product_id']))
                         
         # Create Journal Entry for the purchase
@@ -531,8 +531,6 @@ def record_purchase(supplier_id, purchase_items_list):
     finally:
         if conn: conn.close()
 
-
-
 def delete_sale_by_id(sale_id):
     """
     Deletes a sale and all related records, including items, payments,
@@ -544,24 +542,24 @@ def delete_sale_by_id(sale_id):
         cursor = conn.cursor()
         
         # 1. Get sale items to revert stock before deleting them
-        cursor.execute("SELECT product_id, quantity FROM sale_items WHERE sale_id = ?", (sale_id,))
+        cursor.execute("SELECT product_id, quantity FROM sale_items WHERE sale_id = %s", (sale_id,))
         items_to_revert = cursor.fetchall()
         
         # 2. Revert product stock
         for item in items_to_revert:
-            cursor.execute("UPDATE products SET stock = stock + ? WHERE id = ?", (item['quantity'], item['product_id']))
+            cursor.execute("UPDATE products SET stock = stock + %s WHERE id = %s", (item[0], item[1]))
 
         # 3. Delete related records in the correct order (children first)
-        cursor.execute("DELETE FROM journal_entries WHERE reference_type = 'sale' AND reference_id = ?", (sale_id,))
-        cursor.execute("DELETE FROM sale_payments WHERE sale_id = ?", (sale_id,))
-        cursor.execute("DELETE FROM sale_items WHERE sale_id = ?", (sale_id,))
+        cursor.execute("DELETE FROM journal_entries WHERE reference_type = 'sale' AND reference_id = %s", (sale_id,))
+        cursor.execute("DELETE FROM sale_payments WHERE sale_id = %s", (sale_id,))
+        cursor.execute("DELETE FROM sale_items WHERE sale_id = %s", (sale_id,))
         
         # 4. Finally, delete the main sale record
-        cursor.execute("DELETE FROM sales WHERE id = ?", (sale_id,))
+        cursor.execute("DELETE FROM sales WHERE id = %s", (sale_id,))
         
         conn.commit()
         return cursor.rowcount > 0
-    except sqlite3.Error as e:
+    except psycopg2.Error as e:
         print(f"Error deleting sale ID {sale_id}: {e}")
         if conn: conn.rollback()
         return False
@@ -576,21 +574,21 @@ def add_expense(description, amount, expense_account_name, payment_account_name)
         cursor = conn.cursor()
 
         # Get account IDs
-        cursor.execute("SELECT id FROM chart_of_accounts WHERE name = ?", (expense_account_name,))
+        cursor.execute("SELECT id FROM chart_of_accounts WHERE name = %s", (expense_account_name,))
         expense_account_id_row = cursor.fetchone()
         if not expense_account_id_row: raise Exception(f"Expense account '{expense_account_name}' not found.")
         expense_account_id = expense_account_id_row[0]
 
-        cursor.execute("SELECT id FROM chart_of_accounts WHERE name = ?", (payment_account_name,))
+        cursor.execute("SELECT id FROM chart_of_accounts WHERE name = %s", (payment_account_name,))
         payment_account_id_row = cursor.fetchone()
         if not payment_account_id_row: raise Exception(f"Payment account '{payment_account_name}' not found.")
         payment_account_id = payment_account_id_row[0]
 
         # Insert into expenses table
         expense_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S') # Get current local time
-        cursor.execute("INSERT INTO expenses (description, amount, expense_account_id, payment_account_id, expense_date) VALUES (?, ?, ?, ?, ?)",
+        cursor.execute("INSERT INTO expenses (description, amount, expense_account_id, payment_account_id, expense_date) VALUES (%s, %s, %s, %s, %s) RETURNING id",
                     (description, amount, expense_account_id, payment_account_id, expense_timestamp))
-        expense_id = cursor.lastrowid
+        expense_id = cursor.fetchone()[0]
 
         # Create the journal entry
         # The expense account is debited, and the payment account (an asset) is credited
@@ -610,9 +608,9 @@ def get_chart_of_accounts():
     conn = connect_db()
     if not conn: return []
     try:
-        cursor = conn.cursor()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute("SELECT id, name, type, parent_id FROM chart_of_accounts ORDER BY type, name")
-        return [dict(row) for row in cursor.fetchall()]
+        return cursor.fetchall()
     except Exception as e:
         print(f"Error fetching chart of accounts: {e}")
         return []
@@ -624,9 +622,9 @@ def get_accounts_by_type(account_type):
     conn = connect_db()
     if not conn: return []
     try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, name FROM chart_of_accounts WHERE type = ? ORDER BY name", (account_type,))
-        return [dict(row) for row in cursor.fetchall()]
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT id, name FROM chart_of_accounts WHERE type = %s ORDER BY name", (account_type,))
+        return cursor.fetchall()
     except Exception as e:
         print(f"Error fetching accounts by type: {e}")
         return []
@@ -638,7 +636,7 @@ def get_journal_entries():
     conn = connect_db()
     if not conn: return []
     try:
-        cursor = conn.cursor()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute("""
             SELECT
                 je.date,
@@ -681,13 +679,13 @@ def get_account_balance(account_names, start_date=None, end_date=None):
     try:
         cursor = conn.cursor()
 
-        placeholders = ','.join('?' for name in account_names)
+        placeholders = ','.join(['%s'] * len(account_names))
         cursor.execute(f"SELECT id, name, type FROM chart_of_accounts WHERE name IN ({placeholders})", account_names)
         accounts = cursor.fetchall()
         if not accounts: return 0.0
 
-        account_ids = [acc['id'] for acc in accounts]
-        account_type = accounts[0]['type'] # Assume all passed accounts are of the same base type
+        account_ids = [acc[0] for acc in accounts]
+        account_type = accounts[0][2] # Assume all passed accounts are of the same base type
 
         # Build date conditions if provided
         date_condition = ""
@@ -695,19 +693,19 @@ def get_account_balance(account_names, start_date=None, end_date=None):
         params_credit = list(account_ids)
 
         if start_date:
-            date_condition += " AND date >= ?"
+            date_condition += " AND date >= %s"
             params_debit.append(start_date)
             params_credit.append(start_date)
         if end_date:
             # For Balance Sheet, end_date is inclusive of the whole day
-            date_condition += " AND date <= ?"
+            date_condition += " AND date <= %s"
             params_debit.append(f"{end_date} 23:59:59")
             params_credit.append(f"{end_date} 23:59:59")
 
         # Calculate debits
         debit_query = f"""
             SELECT SUM(amount) FROM journal_entries
-            WHERE debit_account_id IN ({','.join('?' for _ in account_ids)}) {date_condition}
+            WHERE debit_account_id IN ({','.join(['%s'] * len(account_ids))}) {date_condition}
         """
         cursor.execute(debit_query, params_debit)
         total_debits = cursor.fetchone()[0] or 0.0
@@ -715,7 +713,7 @@ def get_account_balance(account_names, start_date=None, end_date=None):
         # Calculate credits
         credit_query = f"""
             SELECT SUM(amount) FROM journal_entries
-            WHERE credit_account_id IN ({','.join('?' for _ in account_ids)}) {date_condition}
+            WHERE credit_account_id IN ({','.join(['%s'] * len(account_ids))}) {date_condition}
         """
         cursor.execute(credit_query, params_credit)
         total_credits = cursor.fetchone()[0] or 0.0
@@ -734,7 +732,6 @@ def get_account_balance(account_names, start_date=None, end_date=None):
         return 0.0
     finally:
         if conn: conn.close()
-
 
 def get_profit_and_loss_statement(start_date=None, end_date=None):
     """Generates data for a Profit and Loss statement."""
@@ -819,14 +816,15 @@ def add_customer(name, phone=None, email=None):
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO customers (name, phone, email) VALUES (?, ?, ?)",
+            cursor.execute("INSERT INTO customers (name, phone, email) VALUES (%s, %s, %s) RETURNING id",
                            (name, phone, email))
+            customer_id = cursor.fetchone()[0]
             conn.commit()
-            return cursor.lastrowid
-        except sqlite3.IntegrityError:
+            return customer_id
+        except psycopg2.IntegrityError:
             print(f"Customer with name '{name}' already exists.")
             return None
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
             print(f"Error adding customer: {e}")
             return None
         finally:
@@ -836,10 +834,10 @@ def get_all_customers():
     conn = connect_db()
     if conn:
         try:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute("SELECT * FROM customers ORDER BY name")
-            return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
+            return cursor.fetchall()
+        except psycopg2.Error as e:
             print(f"Error fetching customers: {e}")
             return []
         finally:
@@ -853,7 +851,7 @@ def get_customer_ledger_summary():
     conn = connect_db()
     if not conn: return []
     try:
-        cursor = conn.cursor()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         query = """
             SELECT
                 c.id as customer_id,
@@ -873,8 +871,8 @@ def get_customer_ledger_summary():
             ORDER BY c.name;
         """
         cursor.execute(query)
-        return [dict(row) for row in cursor.fetchall()]
-    except sqlite3.Error as e:
+        return cursor.fetchall()
+    except psycopg2.Error as e:
         print(f"Error fetching customer ledger summary: {e}")
         return []
     finally:
@@ -887,17 +885,18 @@ def add_product(name, price, stock, category_id=None, sku=None, description=None
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                    INSERT INTO products (name, price, stock, category_id, sku, description, image_data, barcode, buying_price, low_stock_threshold)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (name, price, stock, category_id, sku, description, image_data, barcode, buying_price, low_stock_threshold))
+                INSERT INTO products (name, price, stock, category_id, sku, description, image_data, barcode, buying_price, low_stock_threshold)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+            """, (name, price, stock, category_id, sku, description, image_data, barcode, buying_price, low_stock_threshold))
+            product_id = cursor.fetchone()[0]
             conn.commit()
-            return True
-        except sqlite3.IntegrityError:
-            print(f"Product with name '{name}' or barcode '{barcode}' already exists or invalid category_id.")
-            return False
-        except sqlite3.Error as e:
+            return product_id
+        except psycopg2.IntegrityError:
+            print(f"Product with name '{name}' or barcode '{barcode}' already exists.")
+            return None
+        except psycopg2.Error as e:
             print(f"Error adding product: {e}")
-            return False
+            return None
         finally:
             conn.close()
 
@@ -905,187 +904,17 @@ def get_all_products():
     conn = connect_db()
     if conn:
         try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT p.id, p.name, p.price, p.stock, p.sku, p.description, p.image_data, p.barcode, p.buying_price, c.name as category_name
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("""
+                SELECT p.*, c.name as category_name
                 FROM products p
                 LEFT JOIN categories c ON p.category_id = c.id
                 ORDER BY p.name
-            ''')
-            return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
+            """)
+            return cursor.fetchall()
+        except psycopg2.Error as e:
             print(f"Error fetching products: {e}")
             return []
-        finally:
-            conn.close()
-            
-            
-def get_paginated_products(category=None, stock_status=None, search_term=None, page=1, limit=50):
-    """
-    Fetches a paginated list of products with advanced filtering capabilities.
-    Returns a dictionary containing the products for the page and total counts.
-    """
-    conn = connect_db()
-    if not conn:
-        return {'products': [], 'total_products': 0, 'total_pages': 1}
-
-    offset = (page - 1) * limit
-    
-    # --- Build Query Components ---
-    base_query = """
-        FROM products p
-        LEFT JOIN categories c ON p.category_id = c.id
-    """
-    
-    conditions = []
-    params = []
-
-    if category and category != "All":
-        conditions.append("c.name = ?")
-        params.append(category)
-
-    if stock_status and stock_status != "All":
-        if stock_status == "In Stock":
-            conditions.append("p.stock > 0")
-        elif stock_status == "Low Stock":
-            conditions.append("p.stock <= p.low_stock_threshold AND p.stock > 0")
-        elif stock_status == "Out of Stock":
-            conditions.append("p.stock = 0")
-
-    if search_term and search_term.strip():
-        term = f"%{search_term.strip()}%"
-        conditions.append("(p.name LIKE ? OR p.sku LIKE ? OR p.description LIKE ? OR p.barcode LIKE ?)")
-        params.extend([term, term, term, term])
-
-    where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
-
-    try:
-        cursor = conn.cursor()
-
-        # 1. Get the total count of matching products
-        count_query = f"SELECT COUNT(p.id) {base_query} {where_clause}"
-        cursor.execute(count_query, tuple(params))
-        total_products = cursor.fetchone()[0]
-        total_pages = (total_products + limit - 1) // limit
-
-        # 2. Get the actual data for the current page
-        data_query = f"""
-            SELECT p.id, p.name, p.price, p.buying_price, p.stock, p.sku, 
-                   p.description, p.image_data, p.barcode, p.low_stock_threshold, c.name as category_name
-            {base_query}
-            {where_clause}
-            ORDER BY p.name
-            LIMIT ? OFFSET ?
-        """
-        params.extend([limit, offset])
-        cursor.execute(data_query, tuple(params))
-        
-        products = [dict(row) for row in cursor.fetchall()]
-
-        return {
-            'products': products,
-            'total_products': total_products,
-            'total_pages': max(1, total_pages)
-        }
-    except sqlite3.Error as e:
-        print(f"Error fetching paginated products: {e}")
-        return {'products': [], 'total_products': 0, 'total_pages': 1}
-    finally:
-        if conn:
-            conn.close()            
-
-def get_products_with_filters(category=None, price_min=None, price_max=None, stock_status=None, search_term=None):
-    """Get products with advanced filtering capabilities"""
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            query = '''
-                SELECT p.id, p.name, p.price,p.buying_price, p.stock, p.sku, p.description, p.image_data, p.barcode, c.name as category_name
-                FROM products p
-                LEFT JOIN categories c ON p.category_id = c.id
-                WHERE 1=1
-            '''
-            params = []
-
-            if category and category != "All":
-                query += " AND c.name = ?"
-                params.append(category)
-
-            if price_min is not None and price_min != "":
-                try:
-                    price_min = float(price_min)
-                    query += " AND p.price >= ?"
-                    params.append(price_min)
-                except ValueError:
-                    pass
-
-            if price_max is not None and price_max != "":
-                try:
-                    price_max = float(price_max)
-                    query += " AND p.price <= ?"
-                    params.append(price_max)
-                except ValueError:
-                    pass
-
-            if stock_status and stock_status != "All":
-                if stock_status == "In Stock":
-                    query += " AND p.stock > 0"
-                elif stock_status == "Low Stock":
-                    query += " AND p.stock <= p.low_stock_threshold AND p.stock > 0"
-                elif stock_status == "Out of Stock":
-                    query += " AND p.stock = 0"
-
-            if search_term and search_term.strip():
-                search_term = search_term.strip()
-                query += " AND (p.name LIKE ? OR p.sku LIKE ? OR p.description LIKE ? OR p.barcode LIKE ?)"
-                params.extend([f"%{search_term}%", f"%{search_term}%", f"%{search_term}%", f"%{search_term}%"])
-
-            query += " ORDER BY p.name"
-            cursor.execute(query, tuple(params))
-            return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            print(f"Error fetching products with filters: {e}")
-            return []
-        finally:
-            conn.close()
-
-def get_product_categories_summary():
-    """Get summary of products by category for filter counts"""
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT c.name as category_name, COUNT(p.id) as product_count
-                FROM categories c
-                LEFT JOIN products p ON c.id = p.category_id
-                GROUP BY c.name
-                ORDER BY c.name
-            ''')
-            return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            print(f"Error fetching categories summary: {e}")
-            return []
-        finally:
-            conn.close()
-
-def get_product_by_id(product_id):
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT p.id, p.name, p.price, p.stock, p.sku, p.description, p.image_data, p.barcode, p.buying_price, p.low_stock_threshold, c.name as category_name
-                FROM products p
-                LEFT JOIN categories c ON p.category_id = c.id
-                WHERE p.id = ?
-            ''', (product_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
-        except sqlite3.Error as e:
-            print(f"Error fetching product by ID: {e}")
-            return None
         finally:
             conn.close()
 
@@ -1094,17 +923,22 @@ def update_product(product_id, name, price, stock, category_id=None, sku=None, d
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE products
-                SET name = ?, price = ?, stock = ?, category_id = ?, sku = ?, description = ?, image_data = ?, barcode = ?, buying_price = ?, low_stock_threshold = ?
-                WHERE id = ?
-            ''', (name, price, stock, category_id, sku, description, image_data, barcode, buying_price, low_stock_threshold, product_id))
+            if image_data is not None:
+                cursor.execute("""
+                    UPDATE products SET name=%s, price=%s, stock=%s, category_id=%s, sku=%s, description=%s, image_data=%s, barcode=%s, buying_price=%s, low_stock_threshold=%s
+                    WHERE id=%s
+                """, (name, price, stock, category_id, sku, description, image_data, barcode, buying_price, low_stock_threshold, product_id))
+            else:
+                cursor.execute("""
+                    UPDATE products SET name=%s, price=%s, stock=%s, category_id=%s, sku=%s, description=%s, barcode=%s, buying_price=%s, low_stock_threshold=%s
+                    WHERE id=%s
+                """, (name, price, stock, category_id, sku, description, barcode, buying_price, low_stock_threshold, product_id))
             conn.commit()
             return cursor.rowcount > 0
-        except sqlite3.IntegrityError:
-            print(f"Product with name '{name}' or barcode '{barcode}' already exists or invalid category_id.")
+        except psycopg2.IntegrityError:
+            print(f"Product with name '{name}' or barcode '{barcode}' already exists.")
             return False
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
             print(f"Error updating product: {e}")
             return False
         finally:
@@ -1115,21 +949,36 @@ def delete_product(product_id):
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM sale_items WHERE product_id = ?", (product_id,))
-            if cursor.fetchone()[0] > 0:
-                print(f"Cannot delete product ID {product_id}: It is linked to existing sales.")
-                return False
-            cursor.execute("SELECT COUNT(*) FROM purchase_items WHERE product_id = ?", (product_id,))
-            if cursor.fetchone()[0] > 0:
-                print(f"Cannot delete product ID {product_id}: It is linked to existing purchases.")
-                return False
-
-            cursor.execute("DELETE FROM products WHERE id = ?", (product_id,))
+            # Check if product is linked to sales
+            cursor.execute("SELECT 1 FROM sale_items WHERE product_id = %s LIMIT 1", (product_id,))
+            if cursor.fetchone():
+                return False # Cannot delete if linked
+            
+            cursor.execute("DELETE FROM products WHERE id = %s", (product_id,))
             conn.commit()
             return cursor.rowcount > 0
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
             print(f"Error deleting product: {e}")
             return False
+        finally:
+            conn.close()
+
+def get_low_stock_products():
+    conn = connect_db()
+    if conn:
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("""
+                SELECT p.*, c.name as category_name
+                FROM products p
+                LEFT JOIN categories c ON p.category_id = c.id
+                WHERE p.stock <= p.low_stock_threshold
+                ORDER BY p.stock ASC
+            """)
+            return cursor.fetchall()
+        except psycopg2.Error as e:
+            print(f"Error fetching low stock products: {e}")
+            return []
         finally:
             conn.close()
 
@@ -1139,15 +988,16 @@ def add_category(name):
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO categories (name) VALUES (?)", (name,))
+            cursor.execute("INSERT INTO categories (name) VALUES (%s) RETURNING id", (name,))
+            category_id = cursor.fetchone()[0]
             conn.commit()
-            return True
-        except sqlite3.IntegrityError:
-            print(f"Category '{name}' already exists.")
-            return False
-        except sqlite3.Error as e:
+            return category_id
+        except psycopg2.IntegrityError:
+            print(f"Category with name '{name}' already exists.")
+            return None
+        except psycopg2.Error as e:
             print(f"Error adding category: {e}")
-            return False
+            return None
         finally:
             conn.close()
 
@@ -1155,26 +1005,29 @@ def get_all_categories():
     conn = connect_db()
     if conn:
         try:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute("SELECT * FROM categories ORDER BY name")
-            return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
+            return cursor.fetchall()
+        except psycopg2.Error as e:
             print(f"Error fetching categories: {e}")
             return []
         finally:
             conn.close()
 
-def get_category_by_name(name):
+def update_category(category_id, name):
     conn = connect_db()
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM categories WHERE name = ?", (name,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
-        except sqlite3.Error as e:
-            print(f"Error fetching category by name: {e}")
-            return None
+            cursor.execute("UPDATE categories SET name = %s WHERE id = %s", (name, category_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        except psycopg2.IntegrityError:
+            print(f"Category with name '{name}' already exists.")
+            return False
+        except psycopg2.Error as e:
+            print(f"Error updating category: {e}")
+            return False
         finally:
             conn.close()
 
@@ -1183,195 +1036,17 @@ def delete_category(category_id):
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM products WHERE category_id = ?", (category_id,))
-            if cursor.fetchone()[0] > 0:
-                print(f"Cannot delete category ID {category_id}: It is linked to existing products.")
-                return False
-            cursor.execute("DELETE FROM categories WHERE id = ?", (category_id,))
+            # Check if category is linked to products
+            cursor.execute("SELECT 1 FROM products WHERE category_id = %s LIMIT 1", (category_id,))
+            if cursor.fetchone():
+                return False # Cannot delete if linked
+            
+            cursor.execute("DELETE FROM categories WHERE id = %s", (category_id,))
             conn.commit()
             return cursor.rowcount > 0
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
             print(f"Error deleting category: {e}")
             return False
-        finally:
-            conn.close()
-
-# --- Sales Management Functions ---
-
-def get_supplier_by_name(name):
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM suppliers WHERE name = ?", (name,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
-        except sqlite3.Error as e:
-            print(f"Error fetching supplier by name: {e}")
-            return None
-        finally:
-            conn.close()
-
-def get_all_sales(start_date=None, end_date=None, product_name=None):
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            query = '''
-                SELECT s.id, s.total_amount, s.sale_date, s.discount_amount, s.tax_amount
-                FROM sales s
-            '''
-            params = []
-            conditions = []
-
-            if product_name:
-                query += '''
-                    JOIN sale_items si ON s.id = si.sale_id
-                    JOIN products p ON si.product_id = p.id
-                '''
-                conditions.append("p.name LIKE ?")
-                params.append(f"%{product_name}%")
-
-            if start_date:
-                conditions.append("s.sale_date >= ?")
-                params.append(start_date)
-            if end_date:
-                conditions.append("s.sale_date <= ?")
-                params.append(f"{end_date} 23:59:59") # Include whole end day
-
-            if conditions:
-                query += " WHERE " + " AND ".join(conditions)
-
-            query += " ORDER BY s.sale_date DESC"
-
-            cursor.execute(query, tuple(params))
-            return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            print(f"Error fetching sales history: {e}")
-            return []
-        finally:
-            conn.close()
-
-def get_sale_details(sale_id):
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT si.quantity, si.price_at_sale, p.name as product_name, p.sku, p.description, p.image_data
-                FROM sale_items si
-                JOIN products p ON si.product_id = p.id
-                WHERE si.sale_id = ?
-            ''', (sale_id,))
-            return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            print(f"Error fetching sale details: {e}")
-            return []
-        finally:
-            conn.close()
-
-# --- Inventory Management Functions ---
-def get_low_stock_count():
-    """Fetches the count of products where stock is below or equal to its specific threshold."""
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            # This query now correctly compares stock against each product's own low_stock_threshold
-            cursor.execute("SELECT COUNT(*) FROM products WHERE stock > 0 AND stock <= low_stock_threshold")
-            return cursor.fetchone()[0]
-        except sqlite3.Error as e:
-            print(f"Error fetching low stock count: {e}")
-            return 0
-        finally:
-            conn.close()
-
-def get_total_products_count():
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM products")
-            return cursor.fetchone()[0]
-        except sqlite3.Error as e:
-            print(f"Error fetching total products count: {e}")
-            return 0
-        finally:
-            conn.close()
-
-def get_total_categories_count():
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM categories")
-            return cursor.fetchone()[0]
-        except sqlite3.Error as e:
-            print(f"Error fetching total categories count: {e}")
-            return 0
-        finally:
-            conn.close()
-
-def get_total_sales_amount():
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT SUM(total_amount) FROM sales")
-            total = cursor.fetchone()[0]
-            return total if total is not None else 0.0
-        except sqlite3.Error as e:
-            print(f"Error fetching total sales amount: {e}")
-            return 0.0
-        finally:
-            conn.close()
-
-def get_weekly_sales_summary():
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            today = datetime.now()
-            weekly_sales = []
-            for i in range(7):
-                day = today - timedelta(days=i)
-                start_of_day = day.replace(hour=0, minute=0, second=0, microsecond=0)
-                end_of_day = day.replace(hour=23, minute=59, second=59, microsecond=999999)
-
-                cursor.execute("""
-                    SELECT SUM(total_amount) FROM sales
-                    WHERE sale_date BETWEEN ? AND ?
-                """, (start_of_day.strftime('%Y-%m-%d %H:%M:%S'), end_of_day.strftime('%Y-%m-%d %H:%M:%S')))
-
-                total_sales = cursor.fetchone()[0]
-                weekly_sales.append({
-                    'date': day.strftime('%a'), # Use abbreviated day name
-                    'total_sales': total_sales if total_sales is not None else 0.0
-                })
-            return list(reversed(weekly_sales)) # Return in chronological order
-        except sqlite3.Error as e:
-            print(f"Error fetching weekly sales summary: {e}")
-            return []
-        finally:
-            conn.close()
-
-def get_top_selling_products(limit=5):
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT p.name as product_name, SUM(si.quantity) as total_quantity_sold
-                FROM sale_items si
-                JOIN products p ON si.product_id = p.id
-                GROUP BY p.name
-                ORDER BY total_quantity_sold DESC
-                LIMIT ?
-            ''', (limit,))
-            return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            print(f"Error fetching top selling products: {e}")
-            return []
         finally:
             conn.close()
 
@@ -1381,16 +1056,17 @@ def add_supplier(name, contact_person=None, phone=None):
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO suppliers (name, contact_person, phone) VALUES (?, ?, ?)",
+            cursor.execute("INSERT INTO suppliers (name, contact_person, phone) VALUES (%s, %s, %s) RETURNING id",
                            (name, contact_person, phone))
+            supplier_id = cursor.fetchone()[0]
             conn.commit()
-            return True
-        except sqlite3.IntegrityError:
+            return supplier_id
+        except psycopg2.IntegrityError:
             print(f"Supplier with name '{name}' already exists.")
-            return False
-        except sqlite3.Error as e:
+            return None
+        except psycopg2.Error as e:
             print(f"Error adding supplier: {e}")
-            return False
+            return None
         finally:
             conn.close()
 
@@ -1398,26 +1074,12 @@ def get_all_suppliers():
     conn = connect_db()
     if conn:
         try:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute("SELECT * FROM suppliers ORDER BY name")
-            return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
+            return cursor.fetchall()
+        except psycopg2.Error as e:
             print(f"Error fetching suppliers: {e}")
             return []
-        finally:
-            conn.close()
-
-def get_supplier_by_id(supplier_id):
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM suppliers WHERE id = ?", (supplier_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
-        except sqlite3.Error as e:
-            print(f"Error fetching supplier by ID: {e}")
-            return None
         finally:
             conn.close()
 
@@ -1426,17 +1088,14 @@ def update_supplier(supplier_id, name, contact_person=None, phone=None):
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE suppliers
-                SET name = ?, contact_person = ?, phone = ?
-                WHERE id = ?
-            ''', (name, contact_person, phone, supplier_id))
+            cursor.execute("UPDATE suppliers SET name = %s, contact_person = %s, phone = %s WHERE id = %s",
+                           (name, contact_person, phone, supplier_id))
             conn.commit()
             return cursor.rowcount > 0
-        except sqlite3.IntegrityError:
+        except psycopg2.IntegrityError:
             print(f"Supplier with name '{name}' already exists.")
             return False
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
             print(f"Error updating supplier: {e}")
             return False
         finally:
@@ -1447,766 +1106,305 @@ def delete_supplier(supplier_id):
     if conn:
         try:
             cursor = conn.cursor()
-            # Check for dependencies in purchases
-            cursor.execute("SELECT COUNT(*) FROM purchases WHERE supplier_id = ?", (supplier_id,))
-            if cursor.fetchone()[0] > 0:
-                print(f"Cannot delete supplier ID {supplier_id}: It is linked to existing purchases.")
-                return False
-
-            cursor.execute("DELETE FROM suppliers WHERE id = ?", (supplier_id,))
+            # Check if supplier is linked to purchases
+            cursor.execute("SELECT 1 FROM purchases WHERE supplier_id = %s LIMIT 1", (supplier_id,))
+            if cursor.fetchone():
+                return False # Cannot delete if linked
+            
+            cursor.execute("DELETE FROM suppliers WHERE id = %s", (supplier_id,))
             conn.commit()
             return cursor.rowcount > 0
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
             print(f"Error deleting supplier: {e}")
             return False
         finally:
             conn.close()
 
-# --- Purchase Management Functions ---
-def get_all_purchases():
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT p.id, p.total_cost, p.purchase_date, s.name as supplier_name
-                FROM purchases p
-                JOIN suppliers s ON p.supplier_id = s.id
-                ORDER BY p.purchase_date DESC
-            ''')
-            return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            print(f"Error fetching purchase history: {e}")
-            return []
-        finally:
-            conn.close()
-
-def get_purchase_details(purchase_id):
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT pi.quantity, pi.cost_at_purchase, p.name as product_name, p.sku, p.description, p.image_data
-                FROM purchase_items pi
-                JOIN products p ON pi.product_id = p.id
-                WHERE pi.purchase_id = ?
-            ''', (purchase_id,))
-            return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            print(f"Error fetching purchase details: {e}")
-            return []
-        finally:
-            conn.close()
-
-def get_purchases_by_date_range(start_date, end_date):
-    """Fetches purchase history within a specified date range."""
-    conn = connect_db()
-    if not conn: return []
-    try:
-        cursor = conn.cursor()
-        query = """
-            SELECT p.id, p.total_cost, p.purchase_date, s.name as supplier_name
-            FROM purchases p
-            JOIN suppliers s ON p.supplier_id = s.id
-            WHERE p.purchase_date BETWEEN ? AND ?
-            ORDER BY p.purchase_date DESC
-        """
-        cursor.execute(query, (start_date, f"{end_date} 23:59:59"))
-        return [dict(row) for row in cursor.fetchall()]
-    except sqlite3.Error as e:
-        print(f"Error fetching purchases by date range: {e}")
-        return []
-    finally:
-        if conn: conn.close()            
-
 # --- User Management Functions ---
-def add_user(username, password_hash, role='cashier'):
-    """Add a new user to the database."""
+def add_user(username, password, role='cashier'):
     conn = connect_db()
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+            password_hash = generate_password_hash(password)
+            cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s) RETURNING id",
                            (username, password_hash, role))
+            user_id = cursor.fetchone()[0]
             conn.commit()
-            return True
-        except sqlite3.IntegrityError:
+            return user_id
+        except psycopg2.IntegrityError:
             print(f"User with username '{username}' already exists.")
-            return False
-        except sqlite3.Error as e:
+            return None
+        except psycopg2.Error as e:
             print(f"Error adding user: {e}")
-            return False
-        finally:
-            conn.close()
-
-def get_user_by_username(username):
-    """Get a user by username."""
-    conn = connect_db()
-    if conn:
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
-        except sqlite3.Error as e:
-            print(f"Error fetching user by username: {e}")
             return None
         finally:
             conn.close()
 
-def get_all_users():
-    """Get all users from the database."""
+def get_user_by_username(username):
     conn = connect_db()
     if conn:
         try:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
+            return cursor.fetchone()
+        except psycopg2.Error as e:
+            print(f"Error fetching user: {e}")
+            return None
+        finally:
+            conn.close()
+
+def verify_user(username, password):
+    user = get_user_by_username(username)
+    if user and check_password_hash(user['password_hash'], password):
+        return user
+    return None
+
+def get_all_users():
+    conn = connect_db()
+    if conn:
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
             cursor.execute("SELECT id, username, role FROM users ORDER BY username")
-            return [dict(row) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
+            return cursor.fetchall()
+        except psycopg2.Error as e:
             print(f"Error fetching users: {e}")
             return []
         finally:
             conn.close()
 
-def delete_user(user_id):
-    """Delete a user from the database."""
+def update_user_password(user_id, new_password):
     conn = connect_db()
     if conn:
         try:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            password_hash = generate_password_hash(new_password)
+            cursor.execute("UPDATE users SET password_hash = %s WHERE id = %s", (password_hash, user_id))
             conn.commit()
             return cursor.rowcount > 0
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
+            print(f"Error updating user password: {e}")
+            return False
+        finally:
+            conn.close()
+
+def update_user_role(user_id, new_role):
+    conn = connect_db()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET role = %s WHERE id = %s", (new_role, user_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        except psycopg2.Error as e:
+            print(f"Error updating user role: {e}")
+            return False
+        finally:
+            conn.close()
+
+def delete_user(user_id):
+    conn = connect_db()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        except psycopg2.Error as e:
             print(f"Error deleting user: {e}")
             return False
         finally:
             conn.close()
 
-def verify_user_password(username, password):
-    """Verify a user's password."""
-    user = get_user_by_username(username)
-    if user and 'password_hash' in user:
-        return check_password_hash(user['password_hash'], password)
-    return False
-
-# --- Reporting Functions ---
-def get_sales_summary(start_date=None, end_date=None):
-    """Gets a summary of sales metrics for a given date range."""
-    conn = connect_db()
-    if not conn: return None
-    try:
-        cursor = conn.cursor()
-        
-        # Conditions and params
-        where_clause = ""
-        params = []
-        if start_date and end_date:
-            where_clause = " WHERE sale_date BETWEEN ? AND ?"
-            params.extend([start_date, f"{end_date} 23:59:59"])
-
-        query_sales = f"SELECT SUM(total_amount), COUNT(id), SUM(discount_amount) FROM sales {where_clause}"
-        query_tax = f"SELECT SUM(tax_amount) FROM sales {where_clause}"
-
-        cursor.execute(query_sales, tuple(params))
-        total_sales, transaction_count, total_discount = cursor.fetchone()
-
-        # Tax calculation is now direct sum from the corrected sales table
-        subtotal_before_tax = (total_sales or 0) + (total_discount or 0)
-        total_tax = (subtotal_before_tax * get_tax_rate_from_sales(cursor, where_clause, params)) if subtotal_before_tax > 0 else 0
-
-
-        return {
-            "total_sales": total_sales or 0.0,
-            "transaction_count": transaction_count or 0,
-            "total_discount": total_discount or 0.0,
-            "total_tax": total_tax
-        }
-
-    except sqlite3.Error as e:
-        print(f"Error getting sales summary: {e}")
-        return None
-    finally:
-        conn.close()
-        
-def get_advanced_sales_summary(start_date, end_date):
-    """Gets a comprehensive summary of sales metrics for a given date range."""
+# --- Dashboard Data Functions ---
+def get_dashboard_data():
+    """Fetches data for the dashboard including sales, stock alerts, and financial metrics."""
     conn = connect_db()
     if not conn: return {}
     try:
-        cursor = conn.cursor()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Prepare date clause and params
-        where_clause = " WHERE s.sale_date BETWEEN ? AND ?"
-        params = [start_date, f"{end_date} 23:59:59"]
-
-        # 1. Gross Sales (Total value of items sold before discount)
-        query_gross = f"""
-            SELECT SUM(si.quantity * si.price_at_sale)
-            FROM sale_items si
-            JOIN sales s ON si.sale_id = s.id
-            {where_clause}
-        """
-        cursor.execute(query_gross, tuple(params))
-        gross_sales = cursor.fetchone()[0] or 0.0
-
-        # 2. Discounts and Transactions from sales table
-        query_sales_table = f"SELECT SUM(discount_amount), COUNT(id) FROM sales s {where_clause}"
-        cursor.execute(query_sales_table, tuple(params))
-        total_discount, transaction_count = cursor.fetchone()
-        total_discount = total_discount or 0.0
-        transaction_count = transaction_count or 0
-
-        # 3. Net Sales
-        net_sales = gross_sales - total_discount
-
-        # 4. Cost of Goods Sold (COGS)
-        query_cogs = f"""
-            SELECT SUM(si.quantity * p.buying_price)
+        # Today's sales
+        today = datetime.now().strftime('%Y-%m-%d')
+        cursor.execute("SELECT COUNT(*) as count, COALESCE(SUM(total_amount), 0) as total FROM sales WHERE DATE(sale_date) = %s", (today,))
+        today_sales = cursor.fetchone()
+        
+        # Low stock alerts
+        cursor.execute("SELECT COUNT(*) as count FROM products WHERE stock <= low_stock_threshold")
+        low_stock_count = cursor.fetchone()['count']
+        
+        # Total customers
+        cursor.execute("SELECT COUNT(*) as count FROM customers")
+        customer_count = cursor.fetchone()['count']
+        
+        # Recent sales
+        cursor.execute("""
+            SELECT s.id, s.sale_date, s.total_amount, c.name as customer_name
+            FROM sales s
+            LEFT JOIN customers c ON s.customer_id = c.id
+            ORDER BY s.sale_date DESC LIMIT 5
+        """)
+        recent_sales = cursor.fetchall()
+        
+        # Top selling products
+        cursor.execute("""
+            SELECT p.name, SUM(si.quantity) as total_sold
             FROM sale_items si
             JOIN products p ON si.product_id = p.id
-            JOIN sales s ON si.sale_id = s.id
-            {where_clause}
-        """
-        cursor.execute(query_cogs, tuple(params))
-        total_cogs = cursor.fetchone()[0] or 0.0
-
-        # 5. Gross Profit
-        gross_profit = net_sales - total_cogs
+            GROUP BY p.name
+            ORDER BY total_sold DESC LIMIT 5
+        """)
+        top_products = cursor.fetchall()
         
-        # 6. Tax (back-calculated from net sales as per tax-inclusive model)
-        query_tax_rate = f"SELECT AVG(tax_amount) FROM sales s {where_clause}"
-        cursor.execute(query_tax_rate, tuple(params))
-        avg_tax_rate = cursor.fetchone()[0] or 0.0
-        
-        total_tax = 0
-        if avg_tax_rate > 0:
-            pre_tax_amount = net_sales / (1 + avg_tax_rate)
-            total_tax = net_sales - pre_tax_amount
-
         return {
-            "gross_sales": gross_sales,
-            "total_discount": total_discount,
-            "net_sales": net_sales,
-            "transaction_count": transaction_count,
-            "total_cogs": total_cogs,
-            "gross_profit": gross_profit,
-            "total_tax": total_tax
+            'today_sales_count': today_sales['count'],
+            'today_sales_total': today_sales['total'],
+            'low_stock_count': low_stock_count,
+            'customer_count': customer_count,
+            'recent_sales': recent_sales,
+            'top_products': top_products
         }
-
-    except sqlite3.Error as e:
-        print(f"Error getting advanced sales summary: {e}")
+    except psycopg2.Error as e:
+        print(f"Error fetching dashboard data: {e}")
         return {}
     finally:
-        conn.close()        
+        conn.close()
 
-def get_tax_rate_from_sales(cursor, where_clause, params):
-    """Helper to get an average tax rate for summary purposes."""
-    # This is a simplification; a real system might have varied tax rates.
-    query = f"SELECT AVG(tax_amount) FROM sales {where_clause}"
-    cursor.execute(query, tuple(params))
-    avg_tax_rate = cursor.fetchone()[0]
-    return avg_tax_rate or 0.0
-
-def get_product_performance_report(start_date=None, end_date=None, sort_by='quantity', limit=100):
-    """Gets a report on product performance, sorted by quantity sold or revenue."""
+def get_sales_over_time(days=30):
+    """Fetches sales data over time for charts."""
     conn = connect_db()
     if not conn: return []
     try:
-        cursor = conn.cursor()
-
-        query = """
-            SELECT
-                p.id,
-                p.name,
-                p.sku,
-                SUM(si.quantity) as total_quantity_sold,
-                SUM(si.quantity * si.price_at_sale) as total_revenue
-            FROM sale_items si
-            JOIN products p ON si.product_id = p.id
-        """
-        params = []
-        conditions = []
-
-        if start_date and end_date:
-            query += " JOIN sales s ON si.sale_id = s.id"
-            conditions.append("s.sale_date BETWEEN ? AND ?")
-            params.extend([start_date, f"{end_date} 23:59:59"])
-
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
-
-        query += " GROUP BY p.id, p.name, p.sku"
-
-        if sort_by == 'revenue':
-            query += " ORDER BY total_revenue DESC"
-        else: # Default to quantity
-            query += " ORDER BY total_quantity_sold DESC"
-
-        query += " LIMIT ?"
-        params.append(limit)
-
-        cursor.execute(query, tuple(params))
-        return [dict(row) for row in cursor.fetchall()]
-
-    except sqlite3.Error as e:
-        print(f"Error getting product performance report: {e}")
-        return []
-    finally:
-        conn.close()
-
-def get_inventory_summary_report():
-    """Gets a summary report of the current inventory."""
-    conn = connect_db()
-    if not conn: return None
-    try:
-        cursor = conn.cursor()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        
         cursor.execute("""
-            SELECT
-                p.id,
-                p.name,
-                p.sku,
-                p.stock,
-                p.buying_price,
-                p.price as selling_price,
-                (p.stock * p.buying_price) as total_cost_value,
-                (p.stock * p.price) as total_retail_value,
-                c.name as category_name
-            FROM products p
-            LEFT JOIN categories c ON p.category_id = c.id
-            ORDER BY p.name
-        """)
-        products = [dict(row) for row in cursor.fetchall()]
-
-        total_skus = len(products)
-        total_units = sum(p['stock'] for p in products)
-        total_cost_value = sum(p['total_cost_value'] for p in products)
-        total_retail_value = sum(p['total_retail_value'] for p in products)
-
-        return {
-            "products_details": products,
-            "total_skus": total_skus,
-            "total_units": total_units,
-            "total_cost_value": total_cost_value,
-            "total_retail_value": total_retail_value
-        }
-
-    except sqlite3.Error as e:
-        print(f"Error getting inventory summary report: {e}")
-        return None
-    finally:
-        conn.close()
-
-def get_sales_by_category_report(start_date=None, end_date=None):
-    """Gets a report of total sales revenue broken down by product category."""
-    conn = connect_db()
-    if not conn: return []
-    try:
-        cursor = conn.cursor()
-        query = """
-            SELECT
-                COALESCE(c.name, 'Uncategorized') as category_name,
-                SUM(si.quantity * si.price_at_sale) as total_revenue
-            FROM sale_items si
-            JOIN products p ON si.product_id = p.id
-            LEFT JOIN categories c ON p.category_id = c.id
-        """
-        params = []
-        conditions = []
-        if start_date and end_date:
-            query += " JOIN sales s ON si.sale_id = s.id"
-            conditions.append("s.sale_date BETWEEN ? AND ?")
-            params.extend([start_date, f"{end_date} 23:59:59"])
-
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
-
-        query += " GROUP BY category_name ORDER BY total_revenue DESC"
-
-        cursor.execute(query, tuple(params))
-        return [dict(row) for row in cursor.fetchall()]
-
-    except sqlite3.Error as e:
-        print(f"Error getting sales by category report: {e}")
+            SELECT DATE(sale_date) as date, COUNT(*) as count, COALESCE(SUM(total_amount), 0) as total
+            FROM sales
+            WHERE sale_date BETWEEN %s AND %s
+            GROUP BY DATE(sale_date)
+            ORDER BY date
+        """, (start_date, end_date))
+        
+        return cursor.fetchall()
+    except psycopg2.Error as e:
+        print(f"Error fetching sales over time: {e}")
         return []
     finally:
         conn.close()
 
-def get_sale_by_id(sale_id):
+# --- Search Functions ---
+def search_products(query):
+    """Searches for products by name, SKU, or barcode."""
     conn = connect_db()
     if conn:
         try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM sales WHERE id = ?", (sale_id,))
-            row = cursor.fetchone()
-            return dict(row) if row else None
-        except sqlite3.Error as e:
-            print(f"Error fetching sale by ID: {e}")
-            return None
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            search_pattern = f"%{query}%"
+            cursor.execute("""
+                SELECT p.*, c.name as category_name
+                FROM products p
+                LEFT JOIN categories c ON p.category_id = c.id
+                WHERE p.name ILIKE %s OR p.sku ILIKE %s OR p.barcode ILIKE %s
+                ORDER BY p.name
+            """, (search_pattern, search_pattern, search_pattern))
+            return cursor.fetchall()
+        except psycopg2.Error as e:
+            print(f"Error searching products: {e}")
+            return []
         finally:
             conn.close()
 
-def get_sales_by_date_range(start_date, end_date):
-    """Fetches sales data within a specified date range."""
+def search_customers(query):
+    """Searches for customers by name, phone, or email."""
     conn = connect_db()
-    if not conn:
-        return []
-    try:
-        cursor = conn.cursor()
-        query = """
-            SELECT s.id, s.total_amount, s.sale_date, s.discount_amount, s.tax_amount
-            FROM sales s
-            WHERE s.sale_date BETWEEN ? AND ?
-            ORDER BY s.sale_date DESC
-        """
-        cursor.execute(query, (start_date, f"{end_date} 23:59:59"))
-        return [dict(row) for row in cursor.fetchall()]
-    except sqlite3.Error as e:
-        print(f"Error fetching sales by date range: {e}")
-        return []
-    finally:
-        if conn:
+    if conn:
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            search_pattern = f"%{query}%"
+            cursor.execute("""
+                SELECT *
+                FROM customers
+                WHERE name ILIKE %s OR phone ILIKE %s OR email ILIKE %s
+                ORDER BY name
+            """, (search_pattern, search_pattern, search_pattern))
+            return cursor.fetchall()
+        except psycopg2.Error as e:
+            print(f"Error searching customers: {e}")
+            return []
+        finally:
             conn.close()
 
-def get_yearly_sales_summary():
-    """Gets a summary of sales for each month of the current year."""
+def search_sales(query):
+    """Searches for sales by ID, customer name, or date."""
     conn = connect_db()
-    if not conn: return []
-    try:
-        cursor = conn.cursor()
-        current_year = datetime.now().year
-        
-        query = """
-            SELECT
-                strftime('%m', sale_date) as month,
-                SUM(total_amount) as total_sales
-            FROM sales
-            WHERE strftime('%Y', sale_date) = ?
-            GROUP BY month
-            ORDER BY month ASC
-        """
-        cursor.execute(query, (str(current_year),))
-        
-        sales_data = {row['month']: row['total_sales'] for row in cursor.fetchall()}
-        
-        # Ensure all 12 months are present
-        monthly_summary = []
-        for i in range(1, 13):
-            month_str = f"{i:02d}" # Format month as '01', '02', etc.
-            month_name = datetime(current_year, i, 1).strftime('%b') # 'Jan', 'Feb', etc.
-            monthly_summary.append({
-                'month': month_name,
-                'total_sales': sales_data.get(month_str, 0.0)
-            })
-            
-        return monthly_summary
-
-    except sqlite3.Error as e:
-        print(f"Error getting yearly sales summary: {e}")
-        return []
-    finally:
-        conn.close()
-
-def get_all_expenses():
-    """Fetches all expense records for display."""
-    conn = connect_db()
-    if not conn: return []
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT
-                e.id,
-                e.description,
-                e.amount,
-                e.expense_date,
-                coa_exp.name as expense_account,
-                coa_pay.name as payment_account
-            FROM expenses e
-            JOIN chart_of_accounts coa_exp ON e.expense_account_id = coa_exp.id
-            JOIN chart_of_accounts coa_pay ON e.payment_account_id = coa_pay.id
-            ORDER BY e.expense_date DESC
-        """)
-        return [dict(row) for row in cursor.fetchall()]
-    except sqlite3.Error as e:
-        print(f"Error fetching all expenses: {e}")
-        return []
-    finally:
-        conn.close()
-
-def get_all_expenses_by_date(start_date=None, end_date=None):
-    """Fetches all expense records for display within a specific date range."""
-    conn = connect_db()
-    if not conn: return []
-    try:
-        cursor = conn.cursor()
-        query = """
-            SELECT
-                e.id,
-                e.description,
-                e.amount,
-                e.expense_date,
-                coa_exp.name as expense_account,
-                coa_pay.name as payment_account
-            FROM expenses e
-            JOIN chart_of_accounts coa_exp ON e.expense_account_id = coa_exp.id
-            JOIN chart_of_accounts coa_pay ON e.payment_account_id = coa_pay.id
-        """
-        params = []
-        conditions = []
-        if start_date:
-            conditions.append("e.expense_date >= ?")
-            params.append(start_date)
-        if end_date:
-            conditions.append("e.expense_date <= ?")
-            params.append(f"{end_date} 23:59:59")
-
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
-        
-        query += " ORDER BY e.expense_date DESC"
-
-        cursor.execute(query, tuple(params))
-        return [dict(row) for row in cursor.fetchall()]
-    except sqlite3.Error as e:
-        print(f"Error fetching all expenses by date: {e}")
-        return []
-    finally:
-        conn.close()
-
-
-def get_paginated_journal_entries(start_date=None, end_date=None, account_id=None, page=1, limit=50):
-    """
-    Fetches journal entries with filtering and pagination.
-    Returns a dictionary with the entries for the current page and total counts.
-    """
-    conn = connect_db()
-    if not conn: return {'entries': [], 'total_entries': 0, 'total_pages': 1}
-
-    offset = (page - 1) * limit
-    
-    # Base query for unwinding journal entries
-    base_query = """
-        FROM (
-            SELECT date, description, debit_account_id as account_id, amount as debit, NULL as credit, reference_id, reference_type
-            FROM journal_entries
-            UNION ALL
-            SELECT date, description, credit_account_id as account_id, NULL as debit, amount as credit, reference_id, reference_type
-            FROM journal_entries
-        ) AS unwound
-        JOIN chart_of_accounts coa ON unwound.account_id = coa.id
-    """
-
-    # Build WHERE clause and parameters
-    conditions = []
-    params = []
-    if start_date:
-        conditions.append("unwound.date >= ?")
-        params.append(start_date)
-    if end_date:
-        conditions.append("unwound.date <= ?")
-        params.append(f"{end_date} 23:59:59")
-    if account_id:
-        conditions.append("unwound.account_id = ?")
-        params.append(account_id)
-        
-    where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
-
-    try:
-        cursor = conn.cursor()
-
-        # 1. Get the total count of matching entries for pagination info
-        count_query = f"SELECT COUNT(*) {base_query} {where_clause}"
-        cursor.execute(count_query, tuple(params))
-        total_entries = cursor.fetchone()[0]
-        total_pages = (total_entries + limit - 1) // limit  # Ceiling division
-
-        # 2. Get the actual data for the current page
-        data_query = f"""
-            SELECT unwound.date, unwound.description, coa.name as account_name, unwound.debit, unwound.credit
-            {base_query}
-            {where_clause}
-            ORDER BY unwound.date DESC, unwound.reference_id DESC
-            LIMIT ? OFFSET ?
-        """
-        params.extend([limit, offset])
-        cursor.execute(data_query, tuple(params))
-        
-        entries = [dict(row) for row in cursor.fetchall()]
-
-        return {
-            'entries': entries,
-            'total_entries': total_entries,
-            'total_pages': max(1, total_pages) # Ensure at least 1 page
-        }
-    except Exception as e:
-        print(f"Error fetching paginated journal entries: {e}")
-        return {'entries': [], 'total_entries': 0, 'total_pages': 1}
-    finally:
-        if conn: conn.close()
-
-def populate_dummy_data():
-    """Populates the database with a more comprehensive and realistic set of dummy data for testing."""
-    conn = connect_db()
-    if not conn:
-        print("Could not connect to database. Aborting dummy data population.")
-        return
-
-    try:
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT COUNT(*) FROM products")
-        if cursor.fetchone()[0] > 0:
-            print("Database already contains data. Skipping dummy data population.")
-            return
-
-        print("Adding dummy categories...")
-        categories = ["Electronics", "Beverages", "Snacks", "Office Supplies", "Apparel", "Home Goods"]
-        for category in categories:
-            add_category(category)
-        category_data = get_all_categories()
-        category_ids = {c['name']: c['id'] for c in category_data}
-
-        print("Adding dummy suppliers...")
-        suppliers = [
-            ("Mlimani City Electronics", "Jane Doe", "555-0101"),
-            ("Bakhresa Food Distribution", "John Smith", "555-0102"),
-            ("Kariakoo Office World", "Peter Jones", "555-0103"),
-        ]
-        for name, contact, phone in suppliers:
-            add_supplier(name, contact, phone)
-        supplier_data = get_all_suppliers()
-        supplier_ids = {s['name']: s['id'] for s in supplier_data}
-        
-        print("Adding dummy customers...")
-        customers = [
-            ("Alpha Company", "255755123456", "alpha@test.com"),
-            ("Bravo Logistics", "255655789012", "bravo@test.com"),
-            ("Charlie Services", "255788345678", "charlie@test.com"),
-        ]
-        for name, phone, email in customers:
-            add_customer(name, phone, email)
-        customer_data = get_all_customers()
-        customer_ids = {c['name']: c['id'] for c in customer_data}
-
-        print("Adding dummy users...")
-        add_user('admin', generate_password_hash('admin123'), 'admin')
-        add_user('cashier', generate_password_hash('cashier123'), 'cashier')
-
-        print("Adding a wide variety of dummy products...")
-        product_list = [
-            # Name, Selling Price, Buying Price, Category, Initial Stock, Low Stock Threshold
-            ("Dell XPS 15 Laptop", 3500000, 2800000, "Electronics", 15, 5),
-            ("Logitech MX Master 3 Mouse", 250000, 180000, "Electronics", 30, 10),
-            ("4K 27-inch Monitor", 800000, 650000, "Electronics", 10, 3),
-            ("Coca-Cola 500ml", 1000, 600, "Beverages", 200, 50),
-            ("Azam Embe Juice 1L", 2500, 1800, "Beverages", 150, 40),
-            ("Kilimanjaro Water 1.5L", 1000, 500, "Beverages", 300, 50),
-            ("Pringles Original", 7000, 5000, "Snacks", 80, 20),
-            ("Peanuts (Karanga)", 1500, 800, "Snacks", 9, 10), # Will be low stock
-            ("A4 Paper Ream", 12000, 9000, "Office Supplies", 50, 15),
-            ("Stapler", 8000, 5500, "Office Supplies", 0, 5), # Will be out of stock
-            ("Polo T-Shirt", 25000, 15000, "Apparel", 60, 10),
-            ("Men's Jeans", 45000, 30000, "Apparel", 40, 10),
-            ("Cooking Pot Set", 120000, 95000, "Home Goods", 25, 5),
-            ("LED Smart Bulb", 15000, 10000, "Home Goods", 70, 20),
-        ]
-        for name, price, buying_price, cat_name, stock, low_stock in product_list:
-            add_product(name, price, stock, category_ids[cat_name], f"{cat_name[:3].upper()}{random.randint(100,999)}",
-                        f"A high quality {name}.", None, f"789{random.randint(10000,99999)}", buying_price, low_stock)
-        product_data = get_all_products()
-        
-        print("Generating realistic dummy sales across the past year...")
-        for i in range(75): # Create 75 sale records
-            sale_date = datetime.now() - timedelta(days=random.randint(1, 365), hours=random.randint(1,23), minutes=random.randint(1,59))
-            
-            # Create a cart with 1 to 4 random products
-            cart = []
-            num_items = random.randint(1, 4)
-            for _ in range(num_items):
-                p = random.choice(product_data)
-                if p['stock'] > 0:
-                     cart.append({'product_id': p['id'], 'quantity': 1, 'price_at_sale': p['price']})
-            
-            if not cart: continue # Skip if all chosen products were out of stock
-
-            # Decide sale type
-            sale_type = random.choice(['paid', 'paid', 'paid', 'partial', 'due'])
-            
-            discount = 0.0
-            if random.random() > 0.8: # 20% chance of a discount
-                discount = sum(c['price_at_sale'] for c in cart) * 0.1 # 10% discount
-
-            # Temporarily modify the sale date in the database for this transaction
-            # This is a bit of a hack to backdate sales.
-            conn = connect_db()
-            cursor = conn.cursor()
-            
-            if sale_type == 'paid':
-                total = sum(c['price_at_sale'] for c in cart) - discount
-                payments = [{'method': 'Cash', 'amount': total}]
-                is_ok, sale_id = record_sale(cart, payments, discount, 0.18, None, None)
-            
-            elif sale_type == 'partial':
-                customer = random.choice(customer_data)
-                total = sum(c['price_at_sale'] for c in cart) - discount
-                paid_amount = total * random.uniform(0.3, 0.7) # Pay 30-70%
-                payments = [{'method': 'M-Pesa', 'amount': paid_amount}]
-                is_ok, sale_id = record_sale(cart, payments, discount, 0.18, customer['id'], None)
-
-            else: # Due
-                customer = random.choice(customer_data)
-                is_ok, sale_id = record_sale(cart, [], discount, 0.18, customer['id'], None)
-
-            if is_ok:
-                # Manually update the date of the created sale and its journal entries
-                cursor.execute("UPDATE sales SET sale_date = ? WHERE id = ?", (sale_date, sale_id))
-                cursor.execute("UPDATE journal_entries SET date = ? WHERE reference_type = 'sale' AND reference_id = ?", (sale_date, sale_id))
-                conn.commit()
-            
+    if conn:
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            search_pattern = f"%{query}%"
+            cursor.execute("""
+                SELECT s.*, c.name as customer_name
+                FROM sales s
+                LEFT JOIN customers c ON s.customer_id = c.id
+                WHERE CAST(s.id AS TEXT) ILIKE %s OR c.name ILIKE %s OR DATE(s.sale_date)::TEXT ILIKE %s
+                ORDER BY s.sale_date DESC
+            """, (search_pattern, search_pattern, search_pattern))
+            return cursor.fetchall()
+        except psycopg2.Error as e:
+            print(f"Error searching sales: {e}")
+            return []
+        finally:
             conn.close()
 
-        print("Adding dummy purchases...")
-        purchase_cart = [{'product_id': 10, 'quantity': 30, 'cost': 5500, 'new_price': 8000}] 
-        record_purchase(supplier_ids['Kariakoo Office World'], purchase_cart)
-        print("Adding dummy expenses...")
-        add_expense("Monthly Rent - August", 500000, "Rent Expense", "Bank")
-        add_expense("LUKU Power Bill", 150000, "Utilities Expense", "Cash")
-        add_expense("Staff Salaries - August", 1200000, "Salaries Expense", "Bank")
-
-        print("\nDummy data generation complete!")
-
+# --- Backup and Restore Functions ---
+def backup_database(backup_path):
+    """Creates a backup of the database."""
+    try:
+        import subprocess
+        # Using pg_dump to create a backup
+        cmd = [
+            'pg_dump',
+            '-h', DB_HOST,
+            '-U', DB_USER,
+            '-d', DB_NAME,
+            '-f', backup_path
+        ]
+        env = os.environ.copy()
+        env['PGPASSWORD'] = DB_PASSWORD
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"Backup failed: {result.stderr}")
+            return False
+        return True
     except Exception as e:
-        import traceback
-        print(f"Database error during dummy data generation: {e}")
-        traceback.print_exc()
-        if conn: conn.rollback()
-    finally:
-        if conn: conn.close()
+        print(f"Error creating backup: {e}")
+        return False
 
-if __name__ == '__main__':
-    db_file = get_db_path()
-    if os.path.exists(db_file):
-        os.remove(db_file)
-        print("Removed old database file to ensure a clean start.")
+def restore_database(backup_path):
+    """Restores the database from a backup."""
+    try:
+        import subprocess
+        # Using psql to restore from backup
+        cmd = [
+            'psql',
+            '-h', DB_HOST,
+            '-U', DB_USER,
+            '-d', DB_NAME,
+            '-f', backup_path
+        ]
+        env = os.environ.copy()
+        env['PGPASSWORD'] = DB_PASSWORD
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"Restore failed: {result.stderr}")
+            return False
+        return True
+    except Exception as e:
+        print(f"Error restoring database: {e}")
+        return False
 
+if __name__ == "__main__":
+    # Initialize the database when this script is run directly
     init_db()
-    populate_dummy_data()
-
-    print(f"\n--- Current System State ---")
-    print(f"Total Sales Amount: {get_total_sales_amount():,.2f}")
-    print(f"Total Products: {get_total_products_count()}")
-    print(f"Total Categories: {get_total_categories_count()}")
-    print(f"Low Stock Items: {get_low_stock_count()}")
-
-    print("\n--- Balance Sheet (as of today) ---")
-    bs_data = get_balance_sheet()
-    if bs_data:
-        print(f"  Total Assets: {bs_data['assets']['total']:,.2f}")
-        print(f"  Total Liabilities: {bs_data['liabilities']['total']:,.2f}")
-        print(f"  Total Equity: {bs_data['equity']['total']:,.2f}")
-        check_val = bs_data['total_liabilities_and_equity']
-        print(f"  Total Liabilities + Equity: {check_val:,.2f}")
-        is_balanced = abs(bs_data['assets']['total'] - check_val) < 0.01
-        print(f"  Is Balanced: {is_balanced}")
-
+    print("Database setup complete.")
