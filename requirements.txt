@@ -1,3 +1,4 @@
+# requirements.txt
 Flask==2.3.3
 Flask-CORS==4.0.0
 Werkzeug==2.3.7
@@ -7,3 +8,5 @@ pydantic==2.5.0
 schedule==1.2.0
 fpdf==1.7.2
 gunicorn==21.2.0
+psycopg2-binary==2.9.9  # <-- ADD THIS for PostgreSQL
+python-dotenv==1.0.1    # <-- ADD THIS for local development
