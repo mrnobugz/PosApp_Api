@@ -238,7 +238,7 @@ def get_product_image_data(product_id):
     """Fetches only the BLOB image data for a product."""
     conn = connect_db()
     if conn:
-        
+        try:
             cursor = conn.cursor()
             cursor.execute("SELECT image_data FROM products WHERE id = %s", (product_id,))
             row = cursor.fetchone()
