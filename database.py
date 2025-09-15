@@ -224,7 +224,7 @@ def init_db():
 
             # Populate Chart of Accounts if it's empty
             cursor.execute("SELECT COUNT(*) FROM chart_of_accounts")
-            if cursor.fetchone()[0] == 0:
+            if cursor.fetchone()['id'] == 0:
                 print("Chart of Accounts is empty. Populating with default accounts...")
                 populate_chart_of_accounts()
 
@@ -306,7 +306,7 @@ def record_sale(cart_items, payments, discount_amount=0.0, tax_rate=0.0, custome
             "INSERT INTO sales (total_amount, discount_amount, tax_amount, sale_date, customer_id, status, due_date) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (final_total, discount_amount, tax_rate, sale_timestamp, customer_id, status, due_date)
         )
-        sale_id = cursor.fetchone()[0]
+        sale_id = cursor.fetchone()['id']
 
         # Record sale items, update stock, and calculate COGS
         total_cogs = 0
@@ -316,7 +316,7 @@ def record_sale(cart_items, payments, discount_amount=0.0, tax_rate=0.0, custome
             cursor.execute("UPDATE products SET stock = stock - %s WHERE id = %s", (item['quantity'], item['product_id']))
 
             cursor.execute("SELECT buying_price FROM products WHERE id = %s", (item['product_id'],))
-            buying_price = cursor.fetchone()[0] or 0
+            buying_price = cursor.fetchone()['buying_price'] or 0
             total_cogs += item['quantity'] * buying_price
 
         # Record each payment method
@@ -376,10 +376,10 @@ def add_payment_to_sale(sale_id, payment_method, amount):
 
         # Update the sale's status
         cursor.execute("SELECT total_amount FROM sales WHERE id = %s", (sale_id,))
-        total_amount = cursor.fetchone()[0]
+        total_amount = cursor.fetchone()['total_amount']
         
         cursor.execute("SELECT SUM(amount) FROM sale_payments WHERE sale_id = %s", (sale_id,))
-        total_paid = cursor.fetchone()[0] or 0.0
+        total_paid = cursor.fetchone()['id'] or 0.0
 
         new_status = 'Partial'
         if abs(total_paid - total_amount) < 0.01:
@@ -505,7 +505,7 @@ def record_purchase(supplier_id, purchase_items_list):
 
         cursor.execute("INSERT INTO purchases (supplier_id, total_cost, purchase_date) VALUES (%s, %s, %s) RETURNING id", 
                       (supplier_id, total_cost, purchase_timestamp))
-        purchase_id = cursor.fetchone()[0]
+        purchase_id = cursor.fetchone()['id']
 
         for item in purchase_items_list:
             cursor.execute("INSERT INTO purchase_items (purchase_id, product_id, quantity, cost_at_purchase) VALUES (%s, %s, %s, %s)",
@@ -548,7 +548,7 @@ def delete_sale_by_id(sale_id):
         
         # 2. Revert product stock
         for item in items_to_revert:
-            cursor.execute("UPDATE products SET stock = stock + %s WHERE id = %s", (item[0], item[1]))
+            cursor.execute("UPDATE products SET stock = stock + %s WHERE id = %s", (item['quantity'], item['product_id']))
 
         # 3. Delete related records in the correct order (children first)
         cursor.execute("DELETE FROM journal_entries WHERE reference_type = 'sale' AND reference_id = %s", (sale_id,))
@@ -589,7 +589,7 @@ def add_expense(description, amount, expense_account_name, payment_account_name)
         expense_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S') # Get current local time
         cursor.execute("INSERT INTO expenses (description, amount, expense_account_id, payment_account_id, expense_date) VALUES (%s, %s, %s, %s, %s) RETURNING id",
                     (description, amount, expense_account_id, payment_account_id, expense_timestamp))
-        expense_id = cursor.fetchone()[0]
+        expense_id = cursor.fetchone()['id']
 
         # Create the journal entry
         # The expense account is debited, and the payment account (an asset) is credited
@@ -685,8 +685,8 @@ def get_account_balance(account_names, start_date=None, end_date=None):
         accounts = cursor.fetchall()
         if not accounts: return 0.0
 
-        account_ids = [acc[0] for acc in accounts]
-        account_type = accounts[0][2] # Assume all passed accounts are of the same base type
+        account_ids = [acc['id'] for acc in accounts]
+        account_type = accounts[0]['type'] # Assume all passed accounts are of the same base type
 
         # Build date conditions if provided
         date_condition = ""
@@ -709,7 +709,7 @@ def get_account_balance(account_names, start_date=None, end_date=None):
             WHERE debit_account_id IN ({','.join(['%s'] * len(account_ids))}) {date_condition}
         """
         cursor.execute(debit_query, params_debit)
-        total_debits = cursor.fetchone()[0] or 0.0
+        total_debits = cursor.fetchone()['id'] or 0.0
 
         # Calculate credits
         credit_query = f"""
@@ -717,7 +717,7 @@ def get_account_balance(account_names, start_date=None, end_date=None):
             WHERE credit_account_id IN ({','.join(['%s'] * len(account_ids))}) {date_condition}
         """
         cursor.execute(credit_query, params_credit)
-        total_credits = cursor.fetchone()[0] or 0.0
+        total_credits = cursor.fetchone()['id'] or 0.0
 
         # Balance calculation depends on the account type
         if account_type in ['Asset', 'Expense']:
@@ -819,7 +819,7 @@ def add_customer(name, phone=None, email=None):
             cursor = conn.cursor()
             cursor.execute("INSERT INTO customers (name, phone, email) VALUES (%s, %s, %s) RETURNING id",
                            (name, phone, email))
-            customer_id = cursor.fetchone()[0]
+            customer_id = cursor.fetchone()['id']
             conn.commit()
             return customer_id
         except psycopg2.IntegrityError:
@@ -889,7 +889,7 @@ def add_product(name, price, stock, category_id=None, sku=None, description=None
                 INSERT INTO products (name, price, stock, category_id, sku, description, image_data, barcode, buying_price, low_stock_threshold)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
             """, (name, price, stock, category_id, sku, description, image_data, barcode, buying_price, low_stock_threshold))
-            product_id = cursor.fetchone()[0]
+            product_id = cursor.fetchone()['id']
             conn.commit()
             return product_id
         except psycopg2.IntegrityError:
@@ -931,7 +931,7 @@ def update_product(product_id, name, price, stock, category_id=None, sku=None, d
                 """, (name, price, stock, category_id, sku, description, image_data, barcode, buying_price, low_stock_threshold, product_id))
             else:
                 cursor.execute("""
-                    UPDATE products SET name=%s, price=%s, stock=%s, category_id=%s, sku=%s, description=%s, barcode=%s, buying_price=%s, low_stock_threshold=%s
+                    UPDATE products SET name=%s, price=%s, stock=%s, category_id=%s, sku=%s, description=%s, barcode=%s, =%s, low_stock_threshold=%s
                     WHERE id=%s
                 """, (name, price, stock, category_id, sku, description, barcode, buying_price, low_stock_threshold, product_id))
             conn.commit()
@@ -990,7 +990,7 @@ def add_category(name):
         try:
             cursor = conn.cursor()
             cursor.execute("INSERT INTO categories (name) VALUES (%s) RETURNING id", (name,))
-            category_id = cursor.fetchone()[0]
+            category_id = cursor.fetchone()['id']
             conn.commit()
             return category_id
         except psycopg2.IntegrityError:
@@ -1059,7 +1059,7 @@ def add_supplier(name, contact_person=None, phone=None):
             cursor = conn.cursor()
             cursor.execute("INSERT INTO suppliers (name, contact_person, phone) VALUES (%s, %s, %s) RETURNING id",
                            (name, contact_person, phone))
-            supplier_id = cursor.fetchone()[0]
+            supplier_id = cursor.fetchone()['id']
             conn.commit()
             return supplier_id
         except psycopg2.IntegrityError:
@@ -1130,7 +1130,7 @@ def add_user(username, password, role='cashier'):
             password_hash = generate_password_hash(password)
             cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s) RETURNING id",
                            (username, password_hash, role))
-            user_id = cursor.fetchone()[0]
+            user_id = cursor.fetchone()['id']
             conn.commit()
             return user_id
         except psycopg2.IntegrityError:
