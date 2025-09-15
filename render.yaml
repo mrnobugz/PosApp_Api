@@ -1,10 +1,19 @@
+# render.yaml
 services:
   - type: web
     name: pos-system-api
     env: python
-    plan: free # Or your preferred plan
+    plan: free
     buildCommand: "pip install -r requirements.txt"
     startCommand: "gunicorn --config gunicorn_config.py app:app"
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.4 # Or your preferred Python version
+        value: 3.11.4
+      - key: DATABASE_URL # This will be injected by the database service below
+        fromDatabase:
+          name: pos-database
+          property: connectionString
+
+  - type: psql        
+    name: pos-database
+    plan: free         # preferred plan
