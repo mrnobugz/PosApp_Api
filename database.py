@@ -1,4 +1,5 @@
 import psycopg2
+from psycopg2.extras import RealDictCursor
 import os
 import sys
 from datetime import datetime, timedelta
