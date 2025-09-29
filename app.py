@@ -1,10 +1,12 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import database as db
+from database import init_db
 from werkzeug.security import generate_password_hash, check_password_hash
 import datetime
 import json
 
+init_db()
 app = Flask(__name__)
 CORS(app)
 
@@ -558,6 +560,7 @@ def not_found(error):
 @app.errorhandler(500)
 def internal_error(error):
     return jsonify({'error': 'Internal server error'}), 500
+
 
 
 
